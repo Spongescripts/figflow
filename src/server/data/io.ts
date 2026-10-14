@@ -13,8 +13,32 @@ function toFsPath(path: string | URL): string {
   return fileURLToPath(path);
 }
 
+/**
+ * The Blob read-write token. Vercel names it BLOB_READ_WRITE_TOKEN unless the store was connected
+ * with a custom prefix (e.g. FIGFLOW_READ_WRITE_TOKEN); then it's copied to the default name,
+ * which is where @vercel/blob looks.
+ */
+function blobToken(): string | undefined {
+  if (process.env.BLOB_READ_WRITE_TOKEN) return process.env.BLOB_READ_WRITE_TOKEN;
+  for (const [name, value] of Object.entries(process.env)) {
+    if (name.endsWith("_READ_WRITE_TOKEN") && value?.startsWith("vercel_blob_rw_")) {
+      process.env.BLOB_READ_WRITE_TOKEN = value;
+      return value;
+    }
+  }
+  return undefined;
+}
+
 export function usesBlob(): boolean {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+  return Boolean(blobToken());
+}
+
+/** Which Blob settings this deployment can see (names only, never values), for /api/health. */
+export function blobEnvSeen(): string[] {
+  return Object.keys(process.env)
+    .filter((n) => n === "BLOB_STORE_ID" || n.endsWith("_READ_WRITE_TOKEN") || n === "VERCEL_ENV")
+    .map((n) => (n === "VERCEL_ENV" ? `VERCEL_ENV=${process.env.VERCEL_ENV}` : n))
+    .sort();
 }
 
 function blobKey(absPath: string | URL): string {

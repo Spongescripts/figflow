@@ -1,6 +1,6 @@
 import "server-only";
 import { createWriteStream, existsSync } from "node:fs";
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
@@ -33,9 +33,27 @@ export async function pathExists(absPath: string | URL): Promise<boolean> {
   return page.blobs.length > 0;
 }
 
+/**
+ * Writes one blob. Figflow rewrites the same keys (upload.json and project.json change state
+ * several times), so overwriting must be allowed: without `allowOverwrite` the second write
+ * throws "This blob already exists" and the upload/project is stuck forever.
+ */
+async function putBlob(absPath: string, body: string | Buffer): Promise<void> {
+  const { put } = await blob();
+  const contentType = blobContentType(absPath);
+  await put(blobKey(absPath), body, {
+    access: "private",
+    addRandomSuffix: false,
+    allowOverwrite: true,
+    cacheControlMaxAge: 60,
+    ...(contentType ? { contentType } : {}),
+  });
+}
+
 async function readBlobKey(key: string): Promise<Buffer | null> {
   const { get } = await blob();
-  const result = await get(key, { access: "private" }).catch(() => null);
+  // useCache: false reads from origin; the CDN copy can be a stale upload.json ("reading" forever).
+  const result = await get(key, { access: "private", useCache: false }).catch(() => null);
   if (!result || result.statusCode !== 200 || !result.stream) return null;
   const chunks: Uint8Array[] = [];
   const reader = result.stream.getReader();
@@ -81,10 +99,7 @@ export async function writeBytes(absPath: string | URL, data: string | Uint8Arra
     await writeFileAtomic(absPath, data);
     return;
   }
-  const body = typeof data === "string" ? data : Buffer.from(data);
-  const { put } = await blob();
-  const contentType = blobContentType(absPath);
-  await put(blobKey(absPath), body, { access: "private", addRandomSuffix: false, ...(contentType ? { contentType } : {}) });
+  await putBlob(absPath, typeof data === "string" ? data : Buffer.from(data));
 }
 
 export async function removeTree(absPath: string): Promise<void> {
@@ -151,10 +166,7 @@ export async function streamToPath(absPath: string, body: ReadableStream<Uint8Ar
     throw e;
   }
   if (usesBlob()) {
-    const bytes = await readFile(absPath);
-    const { put } = await blob();
-    const contentType = blobContentType(absPath);
-    await put(blobKey(absPath), bytes, { access: "private", addRandomSuffix: false, ...(contentType ? { contentType } : {}) });
+    await putBlob(absPath, await readFile(absPath));
     await rm(absPath, { force: true }).catch(() => undefined);
   }
   return size;
@@ -171,7 +183,7 @@ export async function openReadStream(absPath: string): Promise<{ stream: Readabl
   }
   const key = blobKey(absPath);
   const { get } = await blob();
-  const result = await get(key, { access: "private" }).catch(() => null);
+  const result = await get(key, { access: "private", useCache: false }).catch(() => null);
   if (!result || result.statusCode !== 200 || !result.stream) return null;
   return { stream: result.stream, size: result.blob.size };
 }
@@ -179,11 +191,19 @@ export async function openReadStream(absPath: string): Promise<{ stream: Readabl
 export async function syncTreeToBlob(absDir: string): Promise<void> {
   if (!usesBlob()) return;
   const { walk } = await import("./walk");
-  for (const file of await walk(absDir)) {
-    if (!existsSync(file)) continue;
-    const bytes = await readFile(file);
-    const { put } = await blob();
-    const contentType = blobContentType(file);
-    await put(blobKey(file), bytes, { access: "private", addRandomSuffix: false, ...(contentType ? { contentType } : {}) });
-  }
+  const files = (await walk(absDir)).filter((f) => existsSync(f));
+  // A few uploads at a time: one by one, a project's ~60 files take most of the function's time.
+  let next = 0;
+  const workers = Array.from({ length: Math.min(8, files.length) }, async () => {
+    while (next < files.length) {
+      const file = files[next++];
+      await putBlob(file, await readFile(file));
+    }
+  });
+  await Promise.all(workers);
+}
+
+/** True on Vercel without a Blob store: each function instance has its own /tmp, so uploads vanish between requests. */
+export function storageMissing(): boolean {
+  return process.env.VERCEL === "1" && !usesBlob() && !process.env.FIGFLOW_DATA_DIR;
 }

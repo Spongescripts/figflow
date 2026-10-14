@@ -126,18 +126,28 @@ export async function readDesign(rec: UploadRecord): Promise<void> {
   }
 }
 
-export async function finalizeBlobUpload(rec: UploadRecord, size: number): Promise<void> {
+/**
+ * Called once the browser's direct-to-Blob upload has finished: checks the file and starts reading
+ * it. Returns false when another request already finalized this upload.
+ */
+export async function finalizeBlobUpload(rec: UploadRecord, size: number): Promise<boolean> {
+  if (rec.state !== "reading" || rec.size > 0) return false;
   if (size === 0) {
     await removeTree(uploadDir(rec.id));
     throw new UploadError("The file is empty.", 400);
+  }
+  if (size > MAX_UPLOAD_BYTES) {
+    await removeTree(uploadDir(rec.id));
+    throw new UploadError(`The file is larger than ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`, 413);
   }
   if (!(await looksLikeFig(designPath(rec.id)))) {
     await removeTree(uploadDir(rec.id));
     throw new UploadError("That isn't a .fig file. In Figma, use File → Save local copy.", 415);
   }
-  rec.size = size;
-  await saveUpload(rec);
-  after(() => readDesign(rec));
+  const claimed: UploadRecord = { ...rec, size };
+  await saveUpload(claimed);
+  after(() => readDesign(claimed));
+  return true;
 }
 
 /** Starts a project, named after the design file; the record is saved as it goes (working, then ready or failed). */

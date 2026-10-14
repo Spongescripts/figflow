@@ -1,11 +1,12 @@
 import type { NextRequest } from "next/server";
 import { UploadError, readDesign, receiveUpload } from "@/server/convert";
-import { usesBlob } from "@/server/data/io";
+import { storageMissing, usesBlob } from "@/server/data/io";
 import { ownerId } from "@/server/owner";
 
-export const maxDuration = 300;
 import { listUploads, sweep } from "@/server/store";
 import { noStore, uploadView } from "@/server/views";
+
+export const maxDuration = 300;
 
 /** A file name safe to show and store: no path separators or control characters. */
 function cleanName(raw: string | null): string {
@@ -24,6 +25,11 @@ function cleanName(raw: string | null): string {
  * in X-File-Name. The body is streamed to disk and checked as it arrives.
  */
 export async function POST(req: NextRequest) {
+  if (storageMissing())
+    return Response.json(
+      { error: "This deployment has no storage: connect a Vercel Blob store (private) so BLOB_READ_WRITE_TOKEN is set, then redeploy." },
+      { status: 503, headers: noStore },
+    );
   if (usesBlob()) {
     return Response.json({ error: "Direct upload is disabled here. Refresh the page and try again." }, { status: 501, headers: noStore });
   }

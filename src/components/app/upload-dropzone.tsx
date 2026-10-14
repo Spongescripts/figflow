@@ -68,6 +68,8 @@ export function UploadDropzone() {
         const health = (await healthRes.json()) as { storage?: string };
         storage = health.storage ?? "disk";
       }
+      if (storage === "missing")
+        return setPhase({ kind: "error", message: "This deployment has no file storage. Connect a Vercel Blob store and redeploy." });
       if (storage === "blob") {
         const t0 = performance.now();
         const ac = new AbortController();
@@ -110,6 +112,12 @@ export function UploadDropzone() {
           return setPhase({ kind: "error", message: e instanceof Error ? e.message : "The upload failed." });
         }
         abortUpload.current = null;
+        setPhase({ kind: "reading", name: file.name, detail: "Checking the upload…" });
+        const done = await fetch(`/api/uploads/${id}/complete`, { method: "POST", cache: "no-store" }).catch(() => null);
+        if (!done?.ok) {
+          const err = done ? ((await done.json().catch(() => ({}))) as { error?: string }).error : undefined;
+          return setPhase({ kind: "error", message: err ?? "Couldn't finish the upload. Try again." });
+        }
         void waitForReading(id, file.name);
         return;
       }

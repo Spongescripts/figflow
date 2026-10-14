@@ -2,6 +2,7 @@ import { prepareUpload, UploadError } from "@/server/convert";
 import { ownerId } from "@/server/owner";
 import { designPath } from "@/server/store";
 import { noStore } from "@/server/views";
+import { storageMissing } from "@/server/data/io";
 import { relative } from "node:path";
 import { dataDir } from "@/server/paths";
 
@@ -10,7 +11,14 @@ function cleanName(raw: string): string {
   return safe.trim().slice(-160) || "design.fig";
 }
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: Request) {
+  if (storageMissing())
+    return Response.json(
+      { error: "This deployment has no storage: connect a Vercel Blob store (private) so BLOB_READ_WRITE_TOKEN is set, then redeploy." },
+      { status: 503, headers: noStore },
+    );
   const owner = await ownerId(true);
   const body = (await req.json().catch(() => null)) as { fileName?: string; declared?: number } | null;
   const fileName = cleanName(body?.fileName ?? "design.fig");

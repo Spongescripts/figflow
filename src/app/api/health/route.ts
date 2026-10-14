@@ -1,4 +1,4 @@
-import { usesBlob } from "@/server/data/io";
+import { storageMissing, usesBlob } from "@/server/data/io";
 
 export const dynamic = "force-dynamic";
 
@@ -7,6 +7,6 @@ export async function GET() {
   return Response.json({
     ok: true,
     engine: process.env.VERCEL === "1" || process.env.FIGFLOW_ENGINE === "inline" ? "inline" : "worker",
-    storage: usesBlob() ? "blob" : "disk",
+    storage: usesBlob() ? "blob" : storageMissing() ? "missing" : "disk",
   });
 }

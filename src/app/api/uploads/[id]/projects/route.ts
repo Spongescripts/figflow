@@ -4,6 +4,10 @@ import { buildProject, newProject, ownedUpload } from "@/server/convert";
 import { listProjects } from "@/server/store";
 import { noStore, notFound, projectSummary } from "@/server/views";
 
+/** The conversion runs after the response, inside this function's time limit. */
+export const maxDuration = 300;
+export const dynamic = "force-dynamic";
+
 const Body = z.object({ frame: z.string().regex(/^\d{1,10}:\d{1,10}$/) });
 
 /** Converts a frame: starts a project and returns its id (poll it for progress). */
